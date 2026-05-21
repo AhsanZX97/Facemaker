@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
@@ -12,61 +12,23 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { EditionBadge } from '@/components/ui/edition-badge';
 import { RuleLine } from '@/components/ui/rule-line';
-import { GoogleButton } from '@/features/auth/google-button';
-import { displayNameForUser, useAuth } from '@/features/auth/use-auth';
 import { useLeaderboardStore } from '@/features/leaderboard/use-leaderboard-store';
+import { claimOrLogin } from '@/features/identity/claim-or-login';
 import { isRemoteLeaderboardEnabled } from '@/lib/env';
 import { cn } from '@/lib/utils';
 
 const MAX_NAME = 20;
+const MIN_NAME = 2;
+const PIN_LENGTH = 4;
 
 export function HomePage() {
   const navigate = useNavigate();
   const remoteEnabled = isRemoteLeaderboardEnabled();
-  const auth = useAuth();
-  const setPlayer = useLeaderboardStore((s) => s.setPlayer);
+  const setIdentity = useLeaderboardStore((s) => s.setIdentity);
+  const setLocalPlayer = useLeaderboardStore((s) => s.setLocalPlayer);
+  const forgetPlayer = useLeaderboardStore((s) => s.forgetPlayer);
   const existingPlayer = useLeaderboardStore((s) => s.player);
   const totalRounds = useLeaderboardStore((s) => s.results.length);
-
-  const initialName =
-    auth.status === 'signed-in' ? '' : existingPlayer?.displayName ?? '';
-  const [name, setName] = useState(initialName);
-  const [signInLoading, setSignInLoading] = useState(false);
-  const [signInError, setSignInError] = useState<string | null>(null);
-
-  const trimmed = name.trim();
-  const isValid = useMemo(
-    () => trimmed.length >= 2 && trimmed.length <= MAX_NAME,
-    [trimmed],
-  );
-
-  // If the user signs in mid-session, clear the name input so we don't
-  // stash a stale local-only name.
-  useEffect(() => {
-    if (auth.status === 'signed-in') setName('');
-  }, [auth.status]);
-
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isValid) return;
-    setPlayer(trimmed);
-    navigate('/play');
-  };
-
-  const onSignIn = async () => {
-    setSignInLoading(true);
-    setSignInError(null);
-    try {
-      await auth.signInWithGoogle();
-      // Browser will redirect to Google; we only get here on synchronous
-      // failure (e.g. popup blocked, supabase misconfigured).
-    } catch (e) {
-      setSignInError(
-        e instanceof Error ? e.message : 'Could not start Google sign-in.',
-      );
-      setSignInLoading(false);
-    }
-  };
 
   const editionNo = useMemo(() => {
     const start = new Date(2026, 0, 1).getTime();
@@ -76,7 +38,6 @@ export function HomePage() {
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-12 sm:gap-16">
-      {/* Masthead */}
       <header className="flex flex-col items-center gap-5 text-center">
         <EditionBadge no={editionNo} label="Daily Edition" />
 
@@ -100,108 +61,34 @@ export function HomePage() {
         <RuleLine label="Vol. I" />
       </header>
 
-      {/* Sign-in card */}
       <section className="grid gap-8 lg:grid-cols-[1.2fr,1fr] lg:items-center">
         <div className="ink-box p-6 sm:p-8">
-          {auth.status === 'loading' ? (
-            <div className="flex items-center justify-center gap-2 py-12 font-mono text-[10px] uppercase tracking-stamp text-muted-fg">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Checking credentials…
-            </div>
-          ) : auth.status === 'signed-in' ? (
-            <SignedInEntry
-              displayName={displayNameForUser(auth.user)}
+          {existingPlayer ? (
+            <ReturningPlayer
+              displayName={existingPlayer.displayName}
               onPlay={() => navigate('/play')}
               onLeaderboard={() => navigate('/leaderboard')}
-              onSignOut={() => auth.signOut()}
+              onSwitch={() => forgetPlayer()}
+            />
+          ) : remoteEnabled ? (
+            <NamePinForm
+              onSuccess={({ playerId, displayName }) => {
+                setIdentity({ playerId, displayName });
+                navigate('/play');
+              }}
+              onLeaderboard={() => navigate('/leaderboard')}
             />
           ) : (
-            <form onSubmit={onSubmit} className="flex flex-col gap-5">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] uppercase tracking-stamp text-muted-fg">
-                  Step 01 — Identify
-                </span>
-                <span className="font-mono text-[10px] uppercase tracking-stamp text-muted-fg tabular">
-                  {trimmed.length}/{MAX_NAME}
-                </span>
-              </div>
-
-              <label
-                htmlFor="display-name"
-                className="font-display text-3xl uppercase leading-none sm:text-4xl"
-              >
-                What do we call you?
-              </label>
-
-              <Input
-                id="display-name"
-                value={name}
-                maxLength={MAX_NAME}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="troll_lord"
-                aria-describedby="display-name-help"
-                autoFocus
-                autoComplete="off"
-                autoCapitalize="off"
-                spellCheck={false}
-              />
-
-              <p
-                id="display-name-help"
-                className="font-mono text-[10px] uppercase tracking-stamp text-muted-fg"
-              >
-                {remoteEnabled
-                  ? '2–20 characters. Anonymous play — sign in below to claim it.'
-                  : '2–20 characters. Stays in your browser until Supabase is wired.'}
-              </p>
-
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <Button
-                  type="submit"
-                  size="lg"
-                  variant="accent"
-                  className="flex-1"
-                  disabled={!isValid}
-                >
-                  {isValid ? 'Press Start' : 'Enter a name to play'}
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
-                <Button
-                  type="button"
-                  size="lg"
-                  variant="outline"
-                  onClick={() => navigate('/leaderboard')}
-                >
-                  <Trophy className="h-4 w-4" /> Leaderboard
-                </Button>
-              </div>
-
-              {remoteEnabled ? (
-                <>
-                  <RuleLine glyph="○ ○ ○" label="or" className="pt-1" />
-                  <GoogleButton
-                    type="button"
-                    onClick={onSignIn}
-                    loading={signInLoading}
-                  />
-                  <p className="text-center font-mono text-[10px] uppercase tracking-stamp text-muted-fg">
-                    Save scores to your Google account · skip naming
-                  </p>
-                  {signInError ? (
-                    <p
-                      role="alert"
-                      className="border-2 border-destructive bg-destructive/10 p-3 font-mono text-[10px] text-destructive"
-                    >
-                      {signInError}
-                    </p>
-                  ) : null}
-                </>
-              ) : null}
-            </form>
+            <NameOnlyForm
+              onSuccess={(name) => {
+                setLocalPlayer(name);
+                navigate('/play');
+              }}
+              onLeaderboard={() => navigate('/leaderboard')}
+            />
           )}
         </div>
 
-        {/* Sidebar — newspaper-style stats */}
         <aside className="flex flex-col gap-4 lg:gap-5">
           <StatBox
             kicker="Today's Run"
@@ -252,32 +139,241 @@ export function HomePage() {
   );
 }
 
-function SignedInEntry({
+function NamePinForm({
+  onSuccess,
+  onLeaderboard,
+}: {
+  onSuccess: (id: { playerId: string; displayName: string }) => void;
+  onLeaderboard: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [pin, setPin] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const trimmedName = name.trim();
+  const isNameValid =
+    trimmedName.length >= MIN_NAME && trimmedName.length <= MAX_NAME;
+  const isPinValid = /^[0-9]{4}$/.test(pin);
+  const canSubmit = isNameValid && isPinValid && !loading;
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await claimOrLogin(trimmedName, pin);
+      onSuccess({
+        playerId: result.playerId,
+        displayName: result.displayName,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong.');
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={onSubmit} className="flex flex-col gap-5">
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-[10px] uppercase tracking-stamp text-muted-fg">
+          Step 01 — Identify
+        </span>
+        <span className="font-mono text-[10px] uppercase tracking-stamp text-muted-fg tabular">
+          {trimmedName.length}/{MAX_NAME}
+        </span>
+      </div>
+
+      <label
+        htmlFor="display-name"
+        className="font-display text-3xl uppercase leading-none sm:text-4xl"
+      >
+        Pick a name & PIN
+      </label>
+
+      <div className="grid gap-3 sm:grid-cols-[1fr,140px]">
+        <Input
+          id="display-name"
+          value={name}
+          maxLength={MAX_NAME}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="troll_lord"
+          aria-describedby="form-help"
+          autoFocus
+          autoComplete="username"
+          autoCapitalize="off"
+          spellCheck={false}
+        />
+        <Input
+          id="pin"
+          value={pin}
+          inputMode="numeric"
+          pattern="[0-9]*"
+          maxLength={PIN_LENGTH}
+          onChange={(e) =>
+            setPin(e.target.value.replace(/[^0-9]/g, '').slice(0, PIN_LENGTH))
+          }
+          placeholder="4-digit PIN"
+          autoComplete="off"
+          className="tabular tracking-[0.4em]"
+        />
+      </div>
+
+      <p
+        id="form-help"
+        className="font-mono text-[10px] uppercase tracking-stamp text-muted-fg"
+      >
+        New name? It's yours after this. Already taken? Enter the right PIN to
+        keep racking up points across devices.
+      </p>
+
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <Button
+          type="submit"
+          size="lg"
+          variant="accent"
+          className="flex-1"
+          disabled={!canSubmit}
+        >
+          {loading ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" /> Checking…
+            </>
+          ) : !isNameValid ? (
+            'Enter a name (2–20)'
+          ) : !isPinValid ? (
+            'Enter a 4-digit PIN'
+          ) : (
+            <>
+              Press Start
+              <ArrowRight className="h-4 w-4" />
+            </>
+          )}
+        </Button>
+        <Button
+          type="button"
+          size="lg"
+          variant="outline"
+          onClick={onLeaderboard}
+        >
+          <Trophy className="h-4 w-4" /> Leaderboard
+        </Button>
+      </div>
+
+      {error ? (
+        <p
+          role="alert"
+          className="border-2 border-destructive bg-destructive/10 p-3 font-mono text-[11px] text-destructive"
+        >
+          {error}
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
+function NameOnlyForm({
+  onSuccess,
+  onLeaderboard,
+}: {
+  onSuccess: (name: string) => void;
+  onLeaderboard: () => void;
+}) {
+  const [name, setName] = useState('');
+  const trimmed = name.trim();
+  const isValid = trimmed.length >= MIN_NAME && trimmed.length <= MAX_NAME;
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isValid) return;
+    onSuccess(trimmed);
+  };
+
+  return (
+    <form onSubmit={onSubmit} className="flex flex-col gap-5">
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-[10px] uppercase tracking-stamp text-muted-fg">
+          Step 01 — Identify
+        </span>
+        <span className="font-mono text-[10px] uppercase tracking-stamp text-muted-fg tabular">
+          {trimmed.length}/{MAX_NAME}
+        </span>
+      </div>
+
+      <label
+        htmlFor="display-name"
+        className="font-display text-3xl uppercase leading-none sm:text-4xl"
+      >
+        What do we call you?
+      </label>
+
+      <Input
+        id="display-name"
+        value={name}
+        maxLength={MAX_NAME}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="troll_lord"
+        autoFocus
+        autoComplete="off"
+        autoCapitalize="off"
+        spellCheck={false}
+      />
+
+      <p className="font-mono text-[10px] uppercase tracking-stamp text-muted-fg">
+        2–20 characters. Stays in your browser until Supabase is wired up.
+      </p>
+
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <Button
+          type="submit"
+          size="lg"
+          variant="accent"
+          className="flex-1"
+          disabled={!isValid}
+        >
+          {isValid ? 'Press Start' : 'Enter a name to play'}
+          <ArrowRight className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          size="lg"
+          variant="outline"
+          onClick={onLeaderboard}
+        >
+          <Trophy className="h-4 w-4" /> Leaderboard
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function ReturningPlayer({
   displayName,
   onPlay,
   onLeaderboard,
-  onSignOut,
+  onSwitch,
 }: {
   displayName: string;
   onPlay: () => void;
   onLeaderboard: () => void;
-  onSignOut: () => void;
+  onSwitch: () => void;
 }) {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-center justify-between">
         <span className="font-mono text-[10px] uppercase tracking-stamp text-muted-fg">
-          Step 01 — Identified
+          Step 01 — Welcome back
         </span>
         <span className="inline-flex items-center gap-1.5 border-2 border-ink bg-accent px-2 py-0.5 font-mono text-[10px] uppercase tracking-stamp text-accent-foreground">
           <span className="h-1.5 w-1.5 rounded-full bg-accent-foreground" />
-          Verified
+          Signed in
         </span>
       </div>
 
       <div className="flex flex-col gap-1">
         <span className="font-mono text-[10px] uppercase tracking-stamp text-muted-fg">
-          Signed in as
+          Playing as
         </span>
         <span className="font-display text-3xl uppercase leading-none sm:text-4xl">
           {displayName}
@@ -307,10 +403,10 @@ function SignedInEntry({
 
       <button
         type="button"
-        onClick={onSignOut}
+        onClick={onSwitch}
         className="self-start font-mono text-[10px] uppercase tracking-stamp text-muted-fg underline-offset-[6px] hover:text-ink hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       >
-        <LogOut className="mr-1 inline h-3 w-3" /> Sign out
+        <LogOut className="mr-1 inline h-3 w-3" /> Switch player
       </button>
     </div>
   );

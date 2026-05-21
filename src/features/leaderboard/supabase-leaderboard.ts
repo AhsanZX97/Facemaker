@@ -111,7 +111,6 @@ export async function fetchLeaderboardRemote(): Promise<LeaderboardEntry[]> {
   const { data, error } = await sb
     .from('leaderboard_entries')
     .select('*')
-    .order('total_points', { ascending: false })
     .order('best_score', { ascending: false })
     .order('earliest_achieved_at', { ascending: true });
   if (error) throw new Error(error.message);

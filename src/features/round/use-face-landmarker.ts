@@ -40,7 +40,13 @@ export function useFaceLandmarker(): UseFaceLandmarkerReturn {
           },
           runningMode: 'VIDEO',
           numFaces: 1,
-          outputFaceBlendshapes: false,
+          // Blendshapes are 52 ARKit-compatible expression weights pre-trained
+          // by Google. They're what we score against — more reliable than
+          // hand-rolled landmark distances under head rotation / lighting.
+          outputFaceBlendshapes: true,
+          // 4x4 transform matrix per face — lets us reject frames where the
+          // user has turned too far from the camera.
+          outputFacialTransformationMatrixes: true,
         });
         if (cancelled) {
           landmarker.close();

@@ -3,8 +3,8 @@ import { persist } from 'zustand/middleware';
 import type { RoundResult } from '@/features/round/types';
 import type { LeaderboardEntry } from './types';
 import { isRemoteLeaderboardEnabled } from '@/lib/env';
-import { getSupabase } from '@/lib/supabase';
 import { insertRoundResultRemote } from '@/features/leaderboard/supabase-leaderboard';
+import { getSupabase } from '@/lib/supabase';
 
 interface Player {
   id: string;
@@ -15,9 +15,11 @@ interface Player {
 interface LeaderboardState {
   player: Player | null;
   results: RoundResult[];
-  setPlayer: (displayName: string) => Player;
-  setPlayerFromAuth: (input: { id: string; displayName: string }) => Player;
-  clearPlayer: () => void;
+  /** Set after a successful claim_or_login RPC call (remote mode). */
+  setIdentity: (input: { playerId: string; displayName: string }) => Player;
+  /** Used in local-only mode when Supabase env vars aren't configured. */
+  setLocalPlayer: (displayName: string) => Player;
+  forgetPlayer: () => void;
   addResult: (
     result: Omit<RoundResult, 'id' | 'createdAt' | 'playerId' | 'playerName'>,
   ) => Promise<RoundResult>;
@@ -27,7 +29,7 @@ interface LeaderboardState {
 
 const generateId = () => Math.random().toString(36).slice(2, 11);
 
-function newId(): string {
+function newLocalId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
@@ -39,39 +41,35 @@ export const useLeaderboardStore = create<LeaderboardState>()(
     (set, get) => ({
       player: null,
       results: [],
-      setPlayer: (displayName) => {
+      setIdentity: ({ playerId, displayName }) => {
+        const trimmed = displayName.trim() || 'Player';
+        const existing = get().player;
+        if (existing && existing.id === playerId && existing.displayName === trimmed) {
+          return existing;
+        }
+        const player: Player = {
+          id: playerId,
+          displayName: trimmed,
+          createdAt: existing?.id === playerId ? existing.createdAt : Date.now(),
+        };
+        set({ player });
+        return player;
+      },
+      setLocalPlayer: (displayName) => {
         const trimmed = displayName.trim();
         const existing = get().player;
         if (existing && existing.displayName === trimmed) return existing;
         const player: Player = existing
           ? { ...existing, displayName: trimmed }
           : {
-              id: newId(),
+              id: newLocalId(),
               displayName: trimmed,
               createdAt: Date.now(),
             };
         set({ player });
         return player;
       },
-      setPlayerFromAuth: ({ id, displayName }) => {
-        const trimmed = displayName.trim() || 'Player';
-        const existing = get().player;
-        if (
-          existing &&
-          existing.id === id &&
-          existing.displayName === trimmed
-        ) {
-          return existing;
-        }
-        const player: Player = {
-          id,
-          displayName: trimmed,
-          createdAt: existing?.id === id ? existing.createdAt : Date.now(),
-        };
-        set({ player });
-        return player;
-      },
-      clearPlayer: () => set({ player: null }),
+      forgetPlayer: () => set({ player: null, results: [] }),
       addResult: async (partial) => {
         const player = get().player;
         if (!player) {
@@ -89,18 +87,16 @@ export const useLeaderboardStore = create<LeaderboardState>()(
             playerId: player.id,
             playerName: player.displayName,
           });
-          // In remote mode the leaderboard is the source of truth — keeping
-          // a parallel local copy would grow localStorage forever and cause
-          // ghost duplicates if anyone ever falls back to local aggregation.
-          // We still keep the latest result around in memory (not persisted)
-          // so the immediate /results/:id navigation can read it without a
-          // round-trip; the remote fetch in ResultsPage covers reloads.
+          // Server is the source of truth in remote mode; keep only the most
+          // recent round in memory so ResultsPage can read it without a
+          // round-trip. Persistence is intentionally turned off for results
+          // in remote mode via partialize().
           set({ results: [result] });
           return result;
         }
         const result: RoundResult = {
           ...partial,
-          id: newId(),
+          id: newLocalId(),
           playerId: player.id,
           playerName: player.displayName,
           createdAt: Date.now(),
@@ -113,19 +109,21 @@ export const useLeaderboardStore = create<LeaderboardState>()(
     }),
     {
       name: 'trollfaces.leaderboard',
-      version: 2,
+      version: 3,
       partialize: (state) => ({
         player: state.player,
-        // Only persist results in local-only mode — in remote mode the
-        // server is the source of truth and the in-memory cache is enough.
         results: isRemoteLeaderboardEnabled() ? [] : state.results,
       }),
       migrate: (persisted, version) => {
-        // v1 → v2: structure unchanged but bumped to clear stray legacy IDs.
+        // v2 → v3: schema unchanged on the client side, but the player.id
+        // semantics flipped from random-per-browser to a server-issued uuid.
+        // Clear stale local-only ids so users re-claim with name+PIN.
         if (!persisted || typeof persisted !== 'object') {
           return { player: null, results: [] };
         }
-        if (version < 2) return persisted;
+        if (version < 3 && isRemoteLeaderboardEnabled()) {
+          return { player: null, results: [] };
+        }
         return persisted;
       },
     },
@@ -137,9 +135,8 @@ export type { LeaderboardEntry } from './types';
 /**
  * Aggregate raw results into a sorted leaderboard.
  * Sort:
- *   1. total points (desc)
- *   2. best single-round score (desc)
- *   3. earliest achievement (asc)
+ *   1. best single-round score (desc)
+ *   2. earliest achievement (asc) — first to hit the score wins the tie
  */
 export function buildLeaderboard(results: RoundResult[]): LeaderboardEntry[] {
   const byPlayer = new Map<string, LeaderboardEntry>();
@@ -152,21 +149,26 @@ export function buildLeaderboard(results: RoundResult[]): LeaderboardEntry[] {
         totalPoints: r.pointsAwarded,
         bestScore: r.score,
         rounds: 1,
+        // Track the FIRST time this player hit their current best, so ties
+        // go to whoever got there first across the entire history.
         earliestAchievedAt: r.createdAt,
       });
       return;
     }
+    if (r.score > existing.bestScore) {
+      existing.bestScore = r.score;
+      existing.earliestAchievedAt = r.createdAt;
+    } else if (r.score === existing.bestScore) {
+      existing.earliestAchievedAt = Math.min(
+        existing.earliestAchievedAt,
+        r.createdAt,
+      );
+    }
     existing.totalPoints += r.pointsAwarded;
-    existing.bestScore = Math.max(existing.bestScore, r.score);
     existing.rounds += 1;
-    existing.earliestAchievedAt = Math.min(
-      existing.earliestAchievedAt,
-      r.createdAt,
-    );
     existing.playerName = r.playerName;
   });
   return [...byPlayer.values()].sort((a, b) => {
-    if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
     if (b.bestScore !== a.bestScore) return b.bestScore - a.bestScore;
     return a.earliestAchievedAt - b.earliestAchievedAt;
   });

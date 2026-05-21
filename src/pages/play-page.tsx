@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Loader2, Play, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -7,11 +7,12 @@ import { RuleLine } from '@/components/ui/rule-line';
 import { CameraPreview } from '@/features/round/camera-preview';
 import { FaceStatus } from '@/features/round/face-status';
 import { ReferenceFace } from '@/features/round/reference-face';
+import { DebugOverlay } from '@/features/round/debug-overlay';
 import { useCamera } from '@/features/round/use-camera';
 import { useFaceLandmarker } from '@/features/round/use-face-landmarker';
 import { useRoundTimer } from '@/features/round/use-round-timer';
 import {
-  extractFeatures,
+  frameFromDetection,
   pointsForScore,
   scoreRound,
 } from '@/features/round/scoring';
@@ -25,6 +26,8 @@ const SAMPLE_INTERVAL_MS = 100;
 
 export function PlayPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const debugMode = searchParams.get('debug') === '1';
   const player = useLeaderboardStore((s) => s.player);
   const addResult = useLeaderboardStore((s) => s.addResult);
 
@@ -33,6 +36,11 @@ export function PlayPage() {
   const [faceDetected, setFaceDetected] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Latest frame + running tally power the live signals panel during the
+  // round. Updated every sample (10/s) which is cheap — only the panel
+  // sub-tree re-renders.
+  const [latestSample, setLatestSample] = useState<FrameSample | null>(null);
+  const [debugCounts, setDebugCounts] = useState({ total: 0, withFace: 0 });
 
   const camera = useCamera({ width: 640, height: 480 });
   const landmarker = useFaceLandmarker();
@@ -63,27 +71,33 @@ export function PlayPage() {
     // doesn't punish players for warmup time.
     if (result == null) return;
 
-    const lm = result.faceLandmarks?.[0];
-    if (!lm || lm.length === 0) {
-      samplesRef.current.push({ timestamp: ts, detected: false, features: null });
-      setFaceDetected(false);
+    const sample = frameFromDetection(result, ts);
+    samplesRef.current.push(sample);
+    setFaceDetected(sample.detected);
+
+    if (!sample.detected) {
       setHint('Move your face into the frame');
-      return;
+    } else if (sample.pose && !sample.pose.ok) {
+      setHint('Face the camera straight on');
+    } else if (sample.effort && sample.effort.wide < 0.4) {
+      setHint('Wider grin!');
+    } else if (sample.effort && sample.effort.smileGate < 0.4) {
+      setHint('Show teeth — part those lips');
+    } else {
+      setHint(null);
     }
-    const features = extractFeatures(lm);
-    samplesRef.current.push({
-      timestamp: ts,
-      detected: features != null,
-      features,
-    });
-    setFaceDetected(features != null);
-    if (features) {
-      setHint(features.mouthWidthRatio < 0.45 ? 'Wider grin!' : null);
-    }
+
+    setLatestSample(sample);
+    setDebugCounts((prev) => ({
+      total: prev.total + 1,
+      withFace: prev.withFace + (sample.detected ? 1 : 0),
+    }));
   }, [camera.videoRef, landmarker]);
 
   const startSampling = useCallback(() => {
     samplesRef.current = [];
+    setDebugCounts({ total: 0, withFace: 0 });
+    setLatestSample(null);
     if (samplerRef.current) window.clearInterval(samplerRef.current);
     samplerRef.current = window.setInterval(sampleFrame, SAMPLE_INTERVAL_MS);
   }, [sampleFrame]);
@@ -151,7 +165,7 @@ export function PlayPage() {
             meta: {
               framesSampled: out.framesSampled,
               framesWithFace: out.framesWithFace,
-              avgFeatures: out.avgFeatures ?? undefined,
+              avgSignals: out.avgSignals ?? undefined,
             },
           });
           camera.stop();
@@ -265,6 +279,15 @@ export function PlayPage() {
             >
               {saveError}
             </p>
+          ) : null}
+
+          {phase === 'running' || phase === 'scoring' || debugMode ? (
+            <DebugOverlay
+              latest={latestSample}
+              framesSampled={debugCounts.total}
+              framesWithFace={debugCounts.withFace}
+              dev={debugMode}
+            />
           ) : null}
         </aside>
       </div>

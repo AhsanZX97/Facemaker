@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Crown, Loader2, Play, Trophy } from 'lucide-react';
+import { Crown, Loader2, Play, RefreshCw, Trophy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { RuleLine } from '@/components/ui/rule-line';
 import { cn } from '@/lib/utils';
@@ -37,14 +37,13 @@ const TAB_META: Record<
     label: 'Today',
     heading: 'Top Troll of the Day',
     subtitle:
-      "Today's rounds only · resets at midnight · best score breaks ties.",
+      "Today's rounds only · resets at midnight · earliest hit wins ties.",
     rule: 'Daily Standings',
   },
   all: {
     label: 'All Time',
     heading: 'Hall of Trolls',
-    subtitle:
-      'Ranked by total points · best score breaks ties · earliest wins.',
+    subtitle: 'Ranked by best single-round score · earliest hit wins ties.',
     rule: 'Standings',
   },
 };
@@ -68,38 +67,67 @@ export function LeaderboardPage() {
   );
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null);
+  // Refs so the callbacks don't capture stale state and so the fetch
+  // identity stays stable across re-renders (no useEffect storms).
+  const cancelRef = useRef<{ cancelled: boolean } | null>(null);
 
-  useEffect(() => {
+  const refresh = useCallback(() => {
     if (!remoteEnabled) {
       setRemoteAll(null);
       setRemoteToday(null);
       setRemoteError(null);
       return;
     }
-    let cancelled = false;
+    if (cancelRef.current) cancelRef.current.cancelled = true;
+    const token = { cancelled: false };
+    cancelRef.current = token;
     setRemoteLoading(true);
     setRemoteError(null);
     Promise.all([fetchLeaderboardRemote(), fetchTodayResultsRemote()])
       .then(([all, todayRows]) => {
-        if (cancelled) return;
+        if (token.cancelled) return;
         setRemoteAll(all);
         setRemoteToday(buildLeaderboard(todayRows));
+        setLastFetchedAt(Date.now());
       })
       .catch((e: unknown) => {
-        if (cancelled) return;
-        setRemoteAll([]);
-        setRemoteToday([]);
+        if (token.cancelled) return;
+        setRemoteAll((prev) => prev ?? []);
+        setRemoteToday((prev) => prev ?? []);
         setRemoteError(
           e instanceof Error ? e.message : 'Could not reach the leaderboard.',
         );
       })
       .finally(() => {
-        if (!cancelled) setRemoteLoading(false);
+        if (!token.cancelled) setRemoteLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [remoteEnabled]);
+
+  // Initial load + cleanup.
+  useEffect(() => {
+    refresh();
+    return () => {
+      if (cancelRef.current) cancelRef.current.cancelled = true;
+    };
+  }, [refresh]);
+
+  // Re-fetch when the tab regains focus or becomes visible — handles the
+  // "came back from another tab / locked phone" case so today's board
+  // doesn't stay frozen on stale data.
+  useEffect(() => {
+    if (!remoteEnabled) return;
+    const onFocus = () => refresh();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [refresh, remoteEnabled]);
 
   const board = useMemo(() => {
     if (remoteEnabled) {
@@ -153,11 +181,32 @@ export function LeaderboardPage() {
             <>You haven't ranked yet — play a round.</>
           )}
         </span>
-        <Button asChild variant="accent" size="default">
-          <Link to="/play">
-            <Play className="h-4 w-4" /> Play
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          {remoteEnabled ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={refresh}
+              disabled={remoteLoading}
+              title={
+                lastFetchedAt
+                  ? `Last updated ${new Date(lastFetchedAt).toLocaleTimeString()}`
+                  : 'Refresh'
+              }
+              aria-label="Refresh leaderboard"
+            >
+              <RefreshCw
+                className={cn('h-4 w-4', remoteLoading && 'animate-spin')}
+              />
+              <span className="hidden sm:inline">Refresh</span>
+            </Button>
+          ) : null}
+          <Button asChild variant="accent" size="default">
+            <Link to="/play">
+              <Play className="h-4 w-4" /> Play
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {remoteError ? (
@@ -185,8 +234,8 @@ export function LeaderboardPage() {
               <span>Rank</span>
               <span>Player</span>
               <span>Tier</span>
+              <span className="text-right">Tries</span>
               <span className="text-right">Best</span>
-              <span className="text-right">Points</span>
             </li>
             {board.map((entry, i) => {
               const isMe = entry.playerId === player?.id;
@@ -218,18 +267,18 @@ export function LeaderboardPage() {
                   </span>
                   <div className="flex items-baseline justify-between text-right sm:block">
                     <span className="font-mono text-[10px] uppercase tracking-stamp text-muted-fg sm:hidden">
-                      Best
+                      Tries
                     </span>
-                    <span className="font-mono tabular text-base font-bold text-ink">
-                      {entry.bestScore}
+                    <span className="font-mono tabular text-base text-muted-fg">
+                      {entry.rounds}
                     </span>
                   </div>
                   <div className="flex items-baseline justify-between text-right sm:block">
                     <span className="font-mono text-[10px] uppercase tracking-stamp text-muted-fg sm:hidden">
-                      Points
+                      Best
                     </span>
                     <span className="font-display text-2xl leading-none tabular">
-                      {entry.totalPoints}
+                      {entry.bestScore}
                     </span>
                   </div>
                 </li>

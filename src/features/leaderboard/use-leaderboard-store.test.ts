@@ -16,14 +16,14 @@ describe('useLeaderboardStore', () => {
     localStorage.clear();
   });
 
-  it('creates a player on first setPlayer', () => {
-    const player = useLeaderboardStore.getState().setPlayer('Ahsan');
+  it('creates a player on first setLocalPlayer', () => {
+    const player = useLeaderboardStore.getState().setLocalPlayer('Ahsan');
     expect(player.displayName).toBe('Ahsan');
     expect(useLeaderboardStore.getState().player?.id).toBe(player.id);
   });
 
   it('records a round result tied to the current player', async () => {
-    useLeaderboardStore.getState().setPlayer('Ahsan');
+    useLeaderboardStore.getState().setLocalPlayer('Ahsan');
     const result = await useLeaderboardStore.getState().addResult({
       score: 82,
       pointsAwarded: 82,
@@ -50,8 +50,9 @@ describe('useLeaderboardStore', () => {
 });
 
 describe('buildLeaderboard', () => {
-  it('sorts by total points, then best score, then earliest', () => {
+  it('sorts by best score, then earliest hit wins ties', () => {
     const board = buildLeaderboard([
+      // Alice: 70 + 30, best 70, lots of rounds
       {
         id: '1',
         playerId: 'a',
@@ -72,6 +73,7 @@ describe('buildLeaderboard', () => {
         createdAt: 200,
         meta: { framesSampled: 10, framesWithFace: 10 },
       },
+      // Bob: single round, best 100 — wins outright on best score.
       {
         id: '3',
         playerId: 'b',
@@ -82,17 +84,21 @@ describe('buildLeaderboard', () => {
         createdAt: 50,
         meta: { framesSampled: 10, framesWithFace: 10 },
       },
+      // Carol: tied best 70 with Alice, but hit it earlier — wins tie.
+      {
+        id: '4',
+        playerId: 'c',
+        playerName: 'Carol',
+        score: 70,
+        pointsAwarded: 70,
+        detectionRate: 1,
+        createdAt: 80,
+        meta: { framesSampled: 10, framesWithFace: 10 },
+      },
     ]);
 
-    expect(board[0]).toMatchObject({
-      playerId: 'b',
-      totalPoints: 100,
-      bestScore: 100,
-    });
-    expect(board[1]).toMatchObject({
-      playerId: 'a',
-      totalPoints: 100,
-      bestScore: 70,
-    });
+    expect(board[0]).toMatchObject({ playerId: 'b', bestScore: 100 });
+    expect(board[1]).toMatchObject({ playerId: 'c', bestScore: 70 });
+    expect(board[2]).toMatchObject({ playerId: 'a', bestScore: 70 });
   });
 });
