@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
@@ -14,6 +14,7 @@ import { EditionBadge } from '@/components/ui/edition-badge';
 import { RuleLine } from '@/components/ui/rule-line';
 import { useLeaderboardStore } from '@/features/leaderboard/use-leaderboard-store';
 import { claimOrLogin } from '@/features/identity/claim-or-login';
+import { fetchTodayRoundCountForPlayer } from '@/features/leaderboard/supabase-leaderboard';
 import { isRemoteLeaderboardEnabled } from '@/lib/env';
 import { cn } from '@/lib/utils';
 
@@ -28,7 +29,34 @@ export function HomePage() {
   const setLocalPlayer = useLeaderboardStore((s) => s.setLocalPlayer);
   const forgetPlayer = useLeaderboardStore((s) => s.forgetPlayer);
   const existingPlayer = useLeaderboardStore((s) => s.player);
-  const totalRounds = useLeaderboardStore((s) => s.results.length);
+  const localResultsCount = useLeaderboardStore((s) => s.results.length);
+
+  // In remote mode, the "Today's Run" count is fetched per-player from
+  // Supabase so it survives reloads and matches across devices. In
+  // local-only mode it just reflects this device's stored rounds.
+  const [todayRoundCount, setTodayRoundCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!remoteEnabled || !existingPlayer) {
+      setTodayRoundCount(null);
+      return;
+    }
+    let cancelled = false;
+    fetchTodayRoundCountForPlayer(existingPlayer.id)
+      .then((n) => {
+        if (!cancelled) setTodayRoundCount(n);
+      })
+      .catch(() => {
+        if (!cancelled) setTodayRoundCount(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [remoteEnabled, existingPlayer]);
+
+  const todayDisplayCount =
+    remoteEnabled && existingPlayer
+      ? todayRoundCount ?? 0
+      : localResultsCount;
 
   const editionNo = useMemo(() => {
     const start = new Date(2026, 0, 1).getTime();
@@ -92,8 +120,14 @@ export function HomePage() {
         <aside className="flex flex-col gap-4 lg:gap-5">
           <StatBox
             kicker="Today's Run"
-            number={totalRounds}
-            unit="rounds played on this device"
+            number={todayDisplayCount}
+            unit={
+              remoteEnabled && existingPlayer
+                ? 'rounds you logged today'
+                : remoteEnabled
+                ? 'rounds today (sign in to track)'
+                : 'rounds played on this device'
+            }
           />
           <StatBox
             kicker="Round Length"
@@ -228,7 +262,7 @@ function NamePinForm({
         keep racking up points across devices.
       </p>
 
-      <div className="flex flex-col gap-3 sm:flex-row">
+      <div className="flex flex-col gap-3 sm:flex-row [&>*]:w-full sm:[&>*]:w-auto">
         <Button
           type="submit"
           size="lg"
@@ -324,7 +358,7 @@ function NameOnlyForm({
         2–20 characters. Stays in your browser until Supabase is wired up.
       </p>
 
-      <div className="flex flex-col gap-3 sm:flex-row">
+      <div className="flex flex-col gap-3 sm:flex-row [&>*]:w-full sm:[&>*]:w-auto">
         <Button
           type="submit"
           size="lg"
@@ -380,7 +414,7 @@ function ReturningPlayer({
         </span>
       </div>
 
-      <div className="flex flex-col gap-3 sm:flex-row">
+      <div className="flex flex-col gap-3 sm:flex-row [&>*]:w-full sm:[&>*]:w-auto">
         <Button
           type="button"
           size="lg"

@@ -404,7 +404,7 @@ function PhaseControls({
             Camera unavailable
           </p>
           <p className="text-sm text-destructive">{cameraError}</p>
-          <Button variant="outline" onClick={onRequestCamera}>
+          <Button variant="outline" className="w-full" onClick={onRequestCamera}>
             Try again
           </Button>
         </div>
@@ -415,6 +415,7 @@ function PhaseControls({
         <Button
           size="lg"
           variant="accent"
+          className="w-full"
           onClick={onRequestCamera}
           disabled={cameraStatus === 'requesting'}
         >
@@ -445,7 +446,7 @@ function PhaseControls({
 
   if (phase === 'ready') {
     return (
-      <Button size="lg" variant="accent" onClick={onStart}>
+      <Button size="lg" variant="accent" className="w-full" onClick={onStart}>
         <Play className="h-4 w-4" /> Start 10s round
       </Button>
     );
@@ -453,7 +454,7 @@ function PhaseControls({
 
   if (phase === 'countdown') {
     return (
-      <Button size="lg" disabled>
+      <Button size="lg" className="w-full" disabled>
         Get ready…
       </Button>
     );
@@ -461,14 +462,14 @@ function PhaseControls({
 
   if (phase === 'running') {
     return (
-      <Button size="lg" variant="accent" disabled>
+      <Button size="lg" variant="accent" className="w-full" disabled>
         <Sparkles className="h-4 w-4" /> Show that face!
       </Button>
     );
   }
 
   return (
-    <Button size="lg" disabled>
+    <Button size="lg" className="w-full" disabled>
       <Loader2 className="h-4 w-4 animate-spin" /> Scoring…
     </Button>
   );

@@ -105,6 +105,25 @@ export async function fetchTodayResultsRemote(): Promise<RoundResult[]> {
   return (data as RoundResultRow[]).map(rowToRoundResult);
 }
 
+/**
+ * Count of rounds the given player has logged since local midnight today.
+ * Used for the "Today's Run" stat on the home page — survives reloads and
+ * device switches because it's keyed on player_id, not local storage.
+ */
+export async function fetchTodayRoundCountForPlayer(
+  playerId: string,
+): Promise<number> {
+  const sb = getSupabase();
+  if (!sb) return 0;
+  const { count, error } = await sb
+    .from('round_results')
+    .select('id', { count: 'exact', head: true })
+    .eq('player_id', playerId)
+    .gte('created_at', startOfTodayIso());
+  if (error) throw new Error(error.message);
+  return count ?? 0;
+}
+
 export async function fetchLeaderboardRemote(): Promise<LeaderboardEntry[]> {
   const sb = getSupabase();
   if (!sb) return [];

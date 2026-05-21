@@ -121,18 +121,18 @@ export function ResultsPage() {
     : verdictForScore(result.score);
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-8">
-      <header className="flex flex-col items-center gap-3 text-center">
+    <div className="mx-auto flex max-w-3xl flex-col gap-5 sm:gap-8">
+      <header className="flex flex-col items-center gap-2 text-center sm:gap-3">
         <span className="font-mono text-[10px] uppercase tracking-stamp text-muted-fg">
           Round Complete · {result.playerName}
         </span>
-        <h1 className="masthead text-5xl text-balance sm:text-7xl">
+        <h1 className="masthead text-balance text-4xl sm:text-7xl">
           {headline}
         </h1>
         <RuleLine label="The verdict" />
       </header>
 
-      <div className="ink-box flex flex-col items-center gap-8 p-6 sm:p-10">
+      <div className="ink-box flex flex-col items-center gap-4 p-4 sm:gap-8 sm:p-10">
         <ReferenceFace size="md" caption="Versus the reference" />
 
         <StampedNumber
@@ -171,16 +171,15 @@ export function ResultsPage() {
         ) : null}
       </div>
 
-      <div className="flex flex-col gap-3 sm:flex-row">
+      <div className="flex flex-col gap-3 sm:flex-row [&>*]:w-full sm:[&>*]:flex-1 sm:[&>*]:w-auto">
         <Button
           size="lg"
           variant="accent"
-          className="flex-1"
           onClick={() => navigate('/play')}
         >
           <Repeat className="h-4 w-4" /> Play again
         </Button>
-        <Button asChild size="lg" variant="outline" className="flex-1">
+        <Button asChild size="lg" variant="outline">
           <Link to="/leaderboard">
             <Trophy className="h-4 w-4" /> Leaderboard
           </Link>

@@ -24,7 +24,7 @@ export function StampedNumber({
       ) : null}
       <span
         className={cn(
-          'font-display text-[140px] sm:text-[180px] leading-none tabular',
+          'font-display text-[96px] sm:text-[140px] md:text-[180px] leading-none tabular',
           tone === 'accent' ? 'text-accent' : 'text-ink',
           animate && 'animate-stamp-impact',
         )}

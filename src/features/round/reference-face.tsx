@@ -8,8 +8,9 @@ interface ReferenceFaceProps {
 
 const sizes = {
   sm: { box: 'h-20 w-20', img: 'h-14 w-14' },
-  md: { box: 'h-36 w-36', img: 'h-28 w-28' },
-  lg: { box: 'h-52 w-52', img: 'h-40 w-40' },
+  // md shrinks on mobile so the results card fits a single screen
+  md: { box: 'h-24 w-24 sm:h-36 sm:w-36', img: 'h-16 w-16 sm:h-28 sm:w-28' },
+  lg: { box: 'h-36 w-36 sm:h-52 sm:w-52', img: 'h-24 w-24 sm:h-40 sm:w-40' },
 };
 
 export function ReferenceFace({
