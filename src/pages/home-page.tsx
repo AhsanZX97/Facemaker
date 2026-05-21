@@ -139,24 +139,26 @@ export function HomePage() {
         <aside className="flex flex-col gap-4 lg:gap-5">
           <StatBox
             kicker="Today's Run"
-            number={
-              todayCount.status === 'loaded'
-                ? todayCount.value
-                : todayCount.status === 'loading'
-                ? '…'
-                : todayCount.status === 'error'
-                ? '—'
-                : localResultsCount
-            }
-            unit={
-              todayCount.status === 'error'
-                ? "couldn't reach the server — try refresh"
-                : remoteEnabled && existingPlayer
-                ? 'rounds you logged today · synced'
-                : remoteEnabled
-                ? 'rounds today (sign in to track)'
-                : 'rounds played on this device'
-            }
+            number={(() => {
+              // Local-only mode: trust the in-memory results count.
+              if (!remoteEnabled) return localResultsCount;
+              // Remote, not signed in: no answer to give without a player_id.
+              if (!existingPlayer) return '—';
+              // Remote + signed in: only show a number once it's actually
+              // loaded from the server. Loading / errored states show a
+              // placeholder instead of 0 so we never fake an answer.
+              if (todayCount.status === 'loaded') return todayCount.value;
+              if (todayCount.status === 'error') return '—';
+              return '…';
+            })()}
+            unit={(() => {
+              if (!remoteEnabled) return 'rounds played on this device';
+              if (!existingPlayer) return 'sign in to track your day';
+              if (todayCount.status === 'error') {
+                return "couldn't reach server — pull to refresh";
+              }
+              return 'rounds you logged today · synced';
+            })()}
           />
           <StatBox
             kicker="Round Length"
